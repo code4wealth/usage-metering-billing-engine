@@ -143,11 +143,14 @@ sequenceDiagram
         A->>DB: DELETE claim WHERE owner=:owner (commit)
         A-->>C: 402 billing_past_due / billing_unpaid
     end
+    A->>DB: compute period_start = current UTC month start, once per request
+    A->>DB: INSERT usage_counters (tenant, period_start, zeros) ON CONFLICT DO NOTHING
     A->>DB: UPDATE usage_counters ... WHERE within limits RETURNING
     alt 0 rows
+        A->>DB: SELECT calls/tokens FROM usage_counters (same transaction)
         A->>DB: ROLLBACK
         A->>DB: DELETE claim WHERE owner=:owner (commit)
-        A-->>C: 429 + Retry-After (next UTC month)
+        A-->>C: 429 quota_calls_exceeded if calls exhausted else quota_tokens_exceeded + Retry-After
     end
     A->>DB: INSERT usage_records (cost µ$)
     alt IntegrityError on unique (tenant_id, idempotency_key)
@@ -164,7 +167,7 @@ sequenceDiagram
     end
 ```
 
-Transaction 1 makes the claim visible to other connections; that is the only reason a concurrent same-key request can receive 409. Transaction 2 keeps counter + ledger + completion atomic, so a failure or crash can never leave a half-written usage record. A different request hash on an in-progress or expired claim returns 422 and never takes over. On 402/429 the claim is released before the error is returned; on a replay no write happens. Period-rollover row creation is issue #3 and is intentionally not changed here.
+Transaction 1 makes the claim visible to other connections; that is the only reason a concurrent same-key request can receive 409. Transaction 2 keeps counter + ledger + completion atomic, so a failure or crash can never leave a half-written usage record. A different request hash on an in-progress or expired claim returns 422 and never takes over. On 402/429 the claim is released before the error is returned; on a replay no write happens. A-9: the counter row is created lazily after the in-transaction billing re-check; the APScheduler close job only reads usage_records and writes invoices idempotently, never usage_counters. A-12: a zero-row update reads the counter in the same transaction to choose the 429 code, with calls taking precedence.
 
 7. Authentication flow
 

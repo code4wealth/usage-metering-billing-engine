@@ -13,12 +13,16 @@ A-5 Billing period: UTC calendar month Locked in capstone requirements
 A-6 Money: integer micro-dollars (BIGINT) Fixed requirement
 A-7 Plans: Free 1,000 calls / 100k tokens; Pro 50,000 calls / 5M tokens; Pro price configurable Fixed requirement
 A-8 Two-phase idempotency claim with 60s lease A single transaction hides in_progress from other connections, making FR-16 (409) unreachable
+A-9 Lazy counter row: in transaction 2 re-check billing status, then INSERT usage_counters ON CONFLICT DO NOTHING, then conditional UPDATE; period_start computed once per request in UTC; close job independent, idempotent, never writes usage_counters Owner-approved; prevents false 429 on first request of a new month
 A-10 Quota period and Retry-After always use the UTC calendar month, independent of Stripe's billing period; Stripe supplies payment status only Owner-approved; payment state must not move quota boundaries
-A-11 Completed idempotency rows expire after IDEMPOTENCY_RETENTION_HOURS=24; expires_at is a 60s lease while in_progress and a retention deadline once completed. Cleanup deletes only expired completed rows Owner-approved; replay window is bounded and documented
+A-11 Limits resolve from the tenant's current subscription and plan on every request; canceled falls back to Free; no counter reset on downgrade Owner-approved; one deterministic rule, no retroactive credits
+A-12 After a zero-row counter UPDATE, read the counter row in the same transaction to choose the 429 code; if both limits fail, quota_calls_exceeded Owner-approved; deterministic error code without a second quota check
+A-13 Completed idempotency rows expire after IDEMPOTENCY_RETENTION_HOURS=24; expires_at is a 60s lease while in_progress and a retention deadline once completed. Cleanup deletes only expired completed rows Owner-approved; replay window is bounded and documented
 D-1 Hard-stop with 429 for both Free and Pro, calls and tokens Owner-approved; no overage invoicing in v1
 D-2 Flat monthly Pro fee from PRO_PRICE_MICRO_USD; usage cost reporting only Owner-approved; no exact price/rates in capstone brief
 D-3 Token counts supplied up front by /v1/usage/simulate; exact pre-check Owner-approved; real inference needs reservation/true-up (future limitation)
 D-4 Both /tenants/me and GET /tenants/{tenant_id}; path-ID is GET only and returns 404 not_found for another tenant's ID Owner-approved
+D-9 Per-key rate limit: RATE_LIMIT_PER_MINUTE, in-memory fixed window per key, single-instance only, plus a per-IP limit on POST /tenants; 429 rate_limit_exceeded with short Retry-After Owner-approved; separate from quota codes
 
 Proposed (change if you disagree)
 
@@ -37,7 +41,6 @@ D-5 Who can call POST /tenants? Public self-signup, or protected by an admin tok
 D-6 When Stripe subscription is canceled, fall back to Free limits? Yes
 D-7 Stripe test price: you create a Pro product/price in Stripe test dashboard and give me only the price ID (never secret keys)? Yes, ID goes in .env
 D-8 Should rejected (402/429) requests be logged as rejected rows in a separate table? Log only, no ledger rows
-D-9 Per-key rate limiting (requests/second) in v1, in-memory? Yes, simple in-memory limiter, documented as single-instance
 D-10 Repo name and visibility: usage-metering-billing-engine, public? Yes
 
 Capstone brief: no exact price, rates or invoice rules in the brief; I will choose values. PRO_PRICE_MICRO_USD=20000000 ($20) is a labelled dev placeholder in .env.example; token rates remain unset until chosen.

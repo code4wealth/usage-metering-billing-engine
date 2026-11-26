@@ -109,7 +109,7 @@ Metering and quota
 FR-9 POST /v1/usage/simulate accepts input/output token counts and records one billable call.
 FR-10 Total tokens = input + output; stored explicitly.
 FR-11 Before recording, check billing status, then atomically check-and-increment calls and tokens for the current period.
-FR-12 Quota exhausted → 429 with Retry-After set to the next period start; no usage record created for rejected requests (rejections are logged as rejected events only if decision D-8 is accepted).
+FR-12 Quota exhausted → 429 with Retry-After set to the next UTC calendar-month start (A-10); no usage record created for rejected requests (rejections are logged as rejected events only if decision D-8 is accepted). `period_start` is computed once per request in UTC. In transaction 2 the order is: re-check billing status → lazy `INSERT ... ON CONFLICT DO NOTHING` of the counter row → conditional `UPDATE ... RETURNING` (A-9). After a zero-row UPDATE, read the counter row **in the same transaction** to choose the code: calls exhausted → `quota_calls_exceeded`; otherwise tokens exhausted → `quota_tokens_exceeded`; if both are exhausted, `quota_calls_exceeded` wins (A-12).
 FR-13 Concurrent requests must never let usage exceed limits.
 
 Idempotency
@@ -126,7 +126,7 @@ Pricing and billing
 
 FR-18 Cost computed with integer math from configurable per-million-token rates (input and output separately).
 FR-19 Rounding: half-up to whole micro-dollar, done once per usage record.
-FR-20 Period-end job (APScheduler) closes the period and creates an internal invoice record.
+FR-20 Period-end job (APScheduler) closes the period and creates an internal invoice record, idempotently via unique `(tenant_id, period_start)`. It sums `usage_records` for the closed period, is independent of metering, and never writes to `usage_counters`; lazy row creation in transaction 2 handles the new period even if the job is late or fails (A-9).
 FR-21 Invoices/payments mirror Stripe state via webhooks.
 
 Webhooks (Stripe)
@@ -179,10 +179,13 @@ Status When error.code
 409 Same Idempotency-Key still processing idempotency_in_progress
 422 Invalid body, or key reused with different body validation_error / idempotency_key_reuse
 429 Calls exhausted / tokens exhausted quota_calls_exceeded / quota_tokens_exceeded
+429 Rate-limit exceeded (per key or per IP) rate_limit_exceeded
 
 Rules:
 
-402 means "billing problem, fix payment". 429 means "quota used up, wait or upgrade". They are never interchangeable.
+402 means "billing problem, fix payment". 429 quota means "quota used up, wait or upgrade"; 429 rate_limit_exceeded means "too many requests, slow down" with a short Retry-After and no quota/usage side effects. They are never interchangeable.
+Limits are resolved from the tenant's current subscription and plan on every request; canceled falls back to Free limits and there is no counter reset on downgrade (A-11).
+If both quota limits fail, `quota_calls_exceeded` is returned (A-12).
 402 applies only to metered endpoints (/v1/*). Read-only account endpoints (/usage, /billing/*, /subscriptions/current) stay accessible so a customer can see why they are blocked and pay.
 Webhook endpoints never return 402.
 canceled subscriptions fall back to Free limits (decision D-6).
