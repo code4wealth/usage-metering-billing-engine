@@ -33,6 +33,10 @@ Bugs
 
 - (none)
 
+Planned test cases (Planned, not written; no results claimed)
+
+- `TC-D6-01 canceled_subscription_falls_back_to_free_limits_no_counter_reset`: when `customer.subscription.deleted` arrives (at paid-period end if `cancel_at_period_end`), a tenant whose current-month usage already exceeds Free limits receives 429 `quota_calls_exceeded` on `/v1/usage/simulate` until the next UTC month; no counter reset and no 402.
+
 Technical decisions
 
 See DECISIONS.md.

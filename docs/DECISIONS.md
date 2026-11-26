@@ -18,10 +18,14 @@ A-10 Quota period and Retry-After always use the UTC calendar month, independent
 A-11 Limits resolve from the tenant's current subscription and plan on every request; canceled falls back to Free; no counter reset on downgrade Owner-approved; one deterministic rule, no retroactive credits
 A-12 After a zero-row counter UPDATE, read the counter row in the same transaction to choose the 429 code; if both limits fail, quota_calls_exceeded Owner-approved; deterministic error code without a second quota check
 A-13 Completed idempotency rows expire after IDEMPOTENCY_RETENTION_HOURS=24; expires_at is a 60s lease while in_progress and a retention deadline once completed. Cleanup deletes only expired completed rows Owner-approved; replay window is bounded and documented
+A-14 Invoices/payments mirror Stripe only (webhook-created, keyed by stripe_invoice_id); close job writes idempotent calendar-month usage snapshots, not invoices; Free tenants get no invoices Owner-approved; Stripe billing period differs from UTC calendar month, so (tenant_id, period_start) cannot key a mirrored invoice
+A-15 Webhook handlers apply state-based updates only when Stripe event.created is strictly newer than target.last_event_created; webhook_events stores stripe_event_created; invoices and subscriptions store last_event_created Owner-approved; prevents out-of-order webhooks from overwriting newer state
 D-1 Hard-stop with 429 for both Free and Pro, calls and tokens Owner-approved; no overage invoicing in v1
 D-2 Flat monthly Pro fee from PRO_PRICE_MICRO_USD; usage cost reporting only Owner-approved; no exact price/rates in capstone brief
 D-3 Token counts supplied up front by /v1/usage/simulate; exact pre-check Owner-approved; real inference needs reservation/true-up (future limitation)
 D-4 Both /tenants/me and GET /tenants/{tenant_id}; path-ID is GET only and returns 404 not_found for another tenant's ID Owner-approved
+D-5 Public self-signup for POST /tenants with a per-IP rate limit Owner-approved; limitations recorded: no email verification, duplicate-email 409 reveals registered emails, proxy client-IP handling must be explicit
+D-6 Canceled subscriptions fall back to Free limits when customer.subscription.deleted arrives (end of paid period if cancel_at_period_end); no counter reset, so a tenant already over Free limits gets 429 until the next UTC month Owner-approved; named test case TC-D6-01 in PROGRESS.md
 D-9 Per-key rate limit: RATE_LIMIT_PER_MINUTE, in-memory fixed window per key, single-instance only, plus a per-IP limit on POST /tenants; 429 rate_limit_exceeded with short Retry-After Owner-approved; separate from quota codes
 
 Proposed (change if you disagree)
@@ -37,8 +41,6 @@ P-6 Account/read endpoints stay open during 402 states Customer must be able to 
 Open questions (need your answer)
 
 ID Question My default if you don't decide
-D-5 Who can call POST /tenants? Public self-signup, or protected by an admin token? Public, rate-limited
-D-6 When Stripe subscription is canceled, fall back to Free limits? Yes
 D-7 Stripe test price: you create a Pro product/price in Stripe test dashboard and give me only the price ID (never secret keys)? Yes, ID goes in .env
 D-8 Should rejected (402/429) requests be logged as rejected rows in a separate table? Log only, no ledger rows
 D-10 Repo name and visibility: usage-metering-billing-engine, public? Yes

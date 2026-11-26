@@ -152,7 +152,7 @@ sequenceDiagram
         A->>DB: DELETE claim WHERE owner=:owner (commit)
         A-->>C: 429 quota_calls_exceeded if calls exhausted else quota_tokens_exceeded + Retry-After
     end
-    A->>DB: INSERT usage_records (cost µ$)
+    A->>DB: INSERT usage_records (cost µ$, period_start, idem key)
     alt IntegrityError on unique (tenant_id, idempotency_key)
         A->>DB: ROLLBACK
         A-->>C: 409 idempotency_in_progress
@@ -212,12 +212,16 @@ DIAGRAM SOURCE (Mermaid)
 
 ```mermaid
 flowchart TD
-    U[usage_records during period] --> J[APScheduler: period close, UTC month end]
+    U[usage_records grouped by period_start] --> J[APScheduler: UTC month close]
     J --> S[Sum calls, tokens, cost µ$ per tenant]
-    S --> I[Create invoice row: period, totals, base fee µ$ from config]
-    I --> P[Stripe webhook invoice.paid / payment_failed]
-    P --> ST[Update invoice + payment + subscription status]
+    S --> SN[UPSERT usage_snapshot keyed by tenant + calendar period]
+    ST[Stripe test mode] -->|invoice events + signature| W[Webhook handler]
+    W --> I[UPSERT invoices keyed by stripe_invoice_id]
+    I --> P[Payments mirror Stripe state]
+    W --> SUB[Subscription status from Stripe]
 ```
+
+The close job writes only usage_snapshots; invoices and payments are created only by Stripe webhooks (A-14). Free tenants get no invoices.
 
 10. Webhook flow
 
@@ -229,11 +233,15 @@ flowchart TD
     V -- no --> E400[400]
     V -- yes --> DUP{event.id already in webhook_events?}
     DUP -- yes --> OK200[200 no-op]
-    DUP -- no --> INS[INSERT webhook_events]
-    INS --> H[Dispatch handler by type, same transaction]
-    H --> OK[200]
+    DUP -- no --> INS[INSERT webhook_events with stripe_event_created]
+    INS --> H{Dispatch by type; event newer than last_event_created?}
+    H -- no --> OLD[200 no-op, mark ignored]
+    H -- yes --> AP[Apply state-based update; set last_event_created]
+    AP --> OK[200]
     H -- handler error --> F[Mark failed, return 500 so Stripe retries]
 ```
+
+Equal timestamps are treated as not newer, so a tie is a no-op (A-15).
 
 11. Folder structure
 

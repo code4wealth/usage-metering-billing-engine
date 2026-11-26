@@ -16,7 +16,8 @@ erDiagram
     API_KEYS ||--o{ USAGE_RECORDS : used_by
     TENANTS ||--o{ IDEMPOTENCY_RECORDS : scopes
     USAGE_RECORDS |o--o| IDEMPOTENCY_RECORDS : created_from
-    TENANTS ||--o{ INVOICES : billed
+    TENANTS ||--o{ USAGE_SNAPSHOTS : summarized_by
+    TENANTS ||--o{ INVOICES : billed_from_stripe
     SUBSCRIPTIONS ||--o{ INVOICES : for
     INVOICES ||--o{ PAYMENTS : paid_by
     WEBHOOK_EVENTS }o--o| TENANTS : relates_to
@@ -54,6 +55,7 @@ erDiagram
         text stripe_subscription_id UK
         timestamptz current_period_start
         timestamptz current_period_end
+        timestamptz last_event_created
     }
     USAGE_COUNTERS {
         uuid tenant_id PK
@@ -68,6 +70,7 @@ erDiagram
         uuid request_id UK
         text endpoint
         timestamptz requested_at
+        date period_start
         smallint call_count
         int input_tokens
         int output_tokens
@@ -94,13 +97,23 @@ erDiagram
         uuid id PK
         uuid tenant_id FK
         uuid subscription_id FK
-        date period_start
-        date period_end
-        bigint usage_cost_micro_usd
-        bigint base_fee_micro_usd
-        bigint total_micro_usd
-        text status
         text stripe_invoice_id UK
+        text stripe_subscription_id
+        timestamptz stripe_period_start
+        timestamptz stripe_period_end
+        bigint amount_due_micro_usd
+        bigint amount_paid_micro_usd
+        text status
+        timestamptz last_event_created
+    }
+    USAGE_SNAPSHOTS {
+        uuid tenant_id PK
+        date period_start PK
+        date period_end
+        int api_calls
+        bigint tokens_used
+        bigint usage_cost_micro_usd
+        timestamptz created_at
     }
     PAYMENTS {
         uuid id PK
@@ -117,6 +130,7 @@ erDiagram
         text event_type
         jsonb payload
         text status
+        timestamptz stripe_event_created
         timestamptz received_at
         timestamptz processed_at
     }
@@ -138,7 +152,7 @@ Purpose: Free and Pro definitions. Limits live here, not in code. Seeded by scri
 
 subscriptions
 
-Purpose: a tenant's plan + billing status. CHECKs: status IN ('active','past_due','unpaid','canceled'). Constraint: partial unique index on (tenant_id) WHERE status <> 'canceled' so a tenant has one live subscription. FKs: tenant_id, plan_id.
+Purpose: a tenant's plan + billing status. CHECKs: status IN ('active','past_due','unpaid','canceled'). Constraint: partial unique index on (tenant_id) WHERE status <> 'canceled' so a tenant has one live subscription. FKs: tenant_id, plan_id. `last_event_created` stores the newest applied Stripe event timestamp; handlers ignore older or equal events (A-15). `customer.subscription.deleted` sets `status='canceled'` at event time (end of paid period if `cancel_at_period_end`); Free limits then apply with no counter reset (D-6, A-11).
 
 usage_counters
 
@@ -158,7 +172,7 @@ Postgres row-level locking serializes concurrent updates on the same row, which 
 
 usage_records (append-only ledger)
 
-Purpose: audit trail and billing source. Constraints: request_id unique; total_tokens = input_tokens + output_tokens (CHECK); tokens and cost ≥ 0; status IN ('succeeded','failed'). Unique: (tenant_id, idempotency_key) where key not null. Indexes: (tenant_id, requested_at DESC) for history; (tenant_id, requested_at) for period sums. Scale note: can be range-partitioned by month later (future scope).
+Purpose: audit trail and billing source. Constraints: request_id unique; total_tokens = input_tokens + output_tokens (CHECK); tokens and cost ≥ 0; status IN ('succeeded','failed'). Unique: (tenant_id, idempotency_key) where key not null. `period_start` (DATE) is set from the same once-per-request UTC value used for `usage_counters`; the close job groups by `period_start`, not `requested_at` (FR-20). Indexes: (tenant_id, requested_at DESC) for history; (tenant_id, period_start) for period sums. Scale note: can be range-partitioned by month later (future scope).
 
 idempotency_records
 
@@ -166,11 +180,15 @@ Purpose: dedupe retries. Unique: (tenant_id, idem_key). request_hash = SHA-256 o
 
 invoices / payments
 
-Purpose: internal billing history mirrored from Stripe. invoices unique (tenant_id, period_start); status IN ('draft','open','paid','past_due','void'). payments references invoice. total_micro_usd = usage_cost_micro_usd + base_fee_micro_usd (CHECK). D-2: Pro is flat-fee only; for paid plans usage_cost_micro_usd = 0 and total_micro_usd = base_fee_micro_usd. Usage cost is stored on usage_records and shown in /billing/summary for reporting only, never added to the invoice total; the existing CHECK still holds.
+Purpose: Stripe mirror only. Invoices and payments are created/updated exclusively by Stripe webhook handlers; Stripe is authoritative for status and amounts. Key: stripe_invoice_id NOT NULL UNIQUE; there is deliberately no unique (tenant_id, period_start), because Stripe's billing period differs from the UTC calendar month (A-10, A-14). CHECK: amount_due_micro_usd >= 0, amount_paid_micro_usd >= 0, status IN ('draft','open','paid','uncollectible','void'). `last_event_created` stores the newest applied Stripe event timestamp; handlers ignore older or equal events (A-15). Stripe cent amounts are converted to µ$ with integer arithmetic (cents * 10_000), never float. Free tenants have no Stripe invoices or payments, hence no rows. D-2: Pro is a flat monthly fee; usage cost is recorded on usage_records and usage_snapshots for reporting only and is never added to a Stripe invoice total.
+
+usage_snapshots
+
+Purpose: idempotent UTC calendar-month summary written by the APScheduler close job. PK (tenant_id, period_start); CHECK api_calls >= 0, tokens_used >= 0, usage_cost_micro_usd >= 0. Written with INSERT ... ON CONFLICT (tenant_id, period_start) DO UPDATE, so reruns are safe. This is NOT an invoice and is never sent to Stripe. Free tenants can have snapshots (usage reporting) but no invoices.
 
 webhook_events
 
-Purpose: dedupe + audit of provider events. Unique: (provider, event_id). status IN ('received','processed','failed','ignored').
+Purpose: dedupe + audit of provider events. Unique: (provider, event_id). status IN ('received','processed','failed','ignored'). `stripe_event_created` stores Stripe's `created` timestamp in UTC; handlers compare it with `last_event_created` on invoices/subscriptions and ignore older or equal events (A-15).
 
 Multi-tenant isolation
 

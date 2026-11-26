@@ -126,14 +126,14 @@ Pricing and billing
 
 FR-18 Cost computed with integer math from configurable per-million-token rates (input and output separately).
 FR-19 Rounding: half-up to whole micro-dollar, done once per usage record.
-FR-20 Period-end job (APScheduler) closes the period and creates an internal invoice record, idempotently via unique `(tenant_id, period_start)`. It sums `usage_records` for the closed period, is independent of metering, and never writes to `usage_counters`; lazy row creation in transaction 2 handles the new period even if the job is late or fails (A-9).
-FR-21 Invoices/payments mirror Stripe state via webhooks.
+FR-20 Period-end job (APScheduler) writes an idempotent UTC calendar-month `usage_snapshot` per tenant (calls, tokens, µ$ cost) keyed by `(tenant_id, period_start)`, via upsert. It sums `usage_records` grouped by `usage_records.period_start` (not `requested_at`), never creates invoices, and never writes `usage_counters`; reruns are safe and the job is independent of metering (A-9, A-14).
+FR-21 Invoices/payments mirror Stripe state via webhooks only, keyed by `stripe_invoice_id`; Stripe is authoritative for status and amounts. Free tenants have no invoices (A-14).
 
 Webhooks (Stripe)
 
 FR-22 POST /webhooks/stripe verifies Stripe-Signature on the raw body.
-FR-23 Each Stripe event.id processed at most once (unique constraint).
-FR-24 Handled events (initial set): checkout.session.completed, customer.subscription.updated, customer.subscription.deleted, invoice.paid, invoice.payment_failed.
+FR-23 Each Stripe event.id processed at most once (unique `(provider, event_id)` in `webhook_events`). The event's `created` timestamp is stored as `stripe_event_created`; a handler applies an update only when the event is strictly newer than the target's `last_event_created`, otherwise it stores the event as `ignored` and returns 200 (A-15).
+FR-24 Handled events (initial set): checkout.session.completed, customer.subscription.updated, customer.subscription.deleted, invoice.paid, invoice.payment_failed. Handlers are state-based, not delta-based, and compare `stripe_event_created` with `last_event_created` on `invoices`/`subscriptions` before writing (A-15). `customer.subscription.deleted` takes effect when the event arrives (at the end of the paid period if `cancel_at_period_end`).
 FR-25 Unknown event types are stored and acknowledged (200), not errored.
 
 Reporting
@@ -188,7 +188,7 @@ Limits are resolved from the tenant's current subscription and plan on every req
 If both quota limits fail, `quota_calls_exceeded` is returned (A-12).
 402 applies only to metered endpoints (/v1/*). Read-only account endpoints (/usage, /billing/*, /subscriptions/current) stay accessible so a customer can see why they are blocked and pay.
 Webhook endpoints never return 402.
-canceled subscriptions fall back to Free limits (decision D-6).
+canceled subscriptions fall back to Free limits when `customer.subscription.deleted` arrives (at the end of the paid period if `cancel_at_period_end`); because there is no counter reset, a tenant already over Free limits gets 429 until the next UTC month (D-6, A-11).
 Error body shape: {"error": {"code": "...", "message": "...", "request_id": "..."}}.
 
 10. Endpoints (summary; full contract in docs/API.md)
@@ -254,3 +254,4 @@ Public GitHub repo, README, API docs, ER/architecture diagrams, test report, lim
 Usage-based overage invoicing, multiple currencies, admin UI, per-endpoint pricing, Redis rate limiting, outbox pattern for emails, partitioned usage tables.
 
 v1 limitation (D-3): token counts are supplied up front by `/v1/usage/simulate`, so the quota check is exact. Real AI inference does not know output tokens before processing; a production version would need a reservation/true-up design, which is future work.
+v1 signup limitation (D-5): `POST /tenants` is public and rate-limited per IP. There is no email verification; a duplicate-email 409 reveals that an email is already registered; client IP handling behind a proxy must be made explicit before relying on the per-IP limit.
