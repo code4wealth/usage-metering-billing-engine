@@ -141,7 +141,7 @@ Tables
 
 tenants
 
-Purpose: the customer account (also the isolation boundary). Constraints: email unique; stripe_customer_id unique, nullable. Index: unique on email. Why no users table: v1 has no human logins; tenant + API keys is enough. `stripe_customer_id` is created in `POST /subscriptions` before Checkout; webhook handlers match events by customer id first, then by subscription id (A-16).
+Purpose: the customer account (also the isolation boundary). Constraints: email unique; stripe_customer_id unique, nullable. Index: unique on email. Why no users table: v1 has no human logins; tenant + API keys is enough. `stripe_customer_id` is created in `POST /subscriptions` before Checkout; webhook handlers match events by customer id first, then by subscription id (A-16). Emails are stored lowercased; a unique-constraint `IntegrityError` maps to 409 `tenant_email_exists`.
 
 api_keys
 

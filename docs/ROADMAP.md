@@ -5,7 +5,7 @@ Rule: finish a phase, owner verifies, then next phase. Each phase delivers: obje
 Phase Objective Key concepts Main outputs Suggested commit
 0 Understand and plan metering, quota, idempotency, tenancy PRD, architecture, schema, decisions docs: add PRD, architecture, database design
 1 Dev environment venv, Docker, Git, project layout repo skeleton, Postgres container chore: project skeleton and tooling
-2 FastAPI fundamentals routers, Pydantic, DI, exceptions /health, config, error handler feat: app factory, health endpoints
+2 FastAPI fundamentals routers, Pydantic, DI, exceptions, staged config validation /health, config, fail-fast validation, error handler feat: app factory, health endpoints
 3 Database integration engine, sessions, models, Alembic, transactions models + first migration feat: db models and migrations
 4 Tenant management isolation, repositories tenant endpoints feat: tenant registration and profile
 5 API key auth hashing, prefix lookup, constant-time compare auth dependency, key endpoints feat: api key authentication

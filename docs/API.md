@@ -6,29 +6,33 @@ Base URL (local): http://localhost:8000. JSON only. Auth header: X-API-Key. Erro
 
 Method + URL Auth Purpose Success Errors
 1 GET /health None Liveness 200 n/a
-2 GET /health/ready None DB connectivity 200 503
-3 POST /tenants None (rate-limited) Register tenant, create Free subscription, return first key once 201 409 email exists, 422
+2 GET /health/ready None DB connectivity 200 503 readiness_db_unavailable
+3 POST /tenants None (rate-limited) Register tenant, create Free subscription, return first key once 201 409 tenant_email_exists, 422 validation_error
 4 GET /tenants/me Key Own profile 200 401
 5 GET /tenants/{tenant_id} Key Own profile by ID 200 401, 404 if not caller's ID
-6 PATCH /tenants/me Key Update name/email 200 401, 409, 422
+6 PATCH /tenants/me Key Update name/email 200 401, 409 tenant_email_exists, 422 validation_error
 7 POST /api-keys Key Create extra key (plaintext shown once) 201 401, 422
 8 GET /api-keys Key List keys (prefix, label, status only) 200 401
-9 DELETE /api-keys/{id} Key Revoke key 204 401, 404
+9 DELETE /api-keys/{id} Key Revoke key 204 401, 404, 409 last_key_required
 10 GET /plans None List plans and limits 200 n/a
 11 POST /subscriptions Key Start/reuse Stripe Checkout for Pro; returns URL 201 new / 200 existing open session 401, 409 subscription_already_pro, 422 validation_error, 503 checkout_unavailable
 12 GET /subscriptions/current Key Plan, status, period 200 401
 13 POST /v1/usage/simulate Key + Idempotency-Key One billable call 200 401, 402, 409, 422 (validation_error / idempotency_key_reuse), 429
 14 GET /usage Key Current-period used vs limit 200 401
-15 GET /usage/history Key Paginated usage records 200 401, 422
+15 GET /usage/history Key Paginated usage records 200 401, 422 validation_error
 16 GET /billing/invoices Key Invoice list 200 401
 17 GET /billing/summary Key Current-period usage cost so far (reporting only, not charged) + status 200 401
-18 POST /webhooks/stripe Stripe-Signature Provider events 200 400 bad signature, 500 handler failure (Stripe retries)
+18 POST /webhooks/stripe Stripe-Signature Provider events 200 400 invalid_signature, 503 webhook_unavailable, 500 handler failure (Stripe retries)
 
 Key endpoints in detail
 
 POST /tenants
 
-Request: {"name": "Acme Labs", "email": "dev@acme.example"} Validation: name 1–100 chars; valid email; unique email. Response 201: {"tenant_id": "...", "api_key": "ume_xxxxxxxx_...", "plan": "free", "note": "Store this key now; it will not be shown again."} DB: insert tenant, subscription (Free, active, current UTC month), api_key (hash) in one transaction.
+Request: {"name": "Acme Labs", "email": "dev@acme.example"} Validation: name 1–100 chars; valid email (lowercased before storage/comparison); unique email. 409 `tenant_email_exists`: a unique-constraint `IntegrityError` on lowercased email maps to 409, on PATCH `/tenants/me` as well as registration (D-5: this reveals registration). Response 201: {"tenant_id": "...", "api_key": "ume_xxxxxxxx_...", "plan": "free", "note": "Store this key now; it will not be shown again."} DB: insert tenant, subscription (Free, active, current UTC month), api_key (hash) in one transaction.
+
+DELETE /api-keys/{id}
+
+Revokes a key by id for the caller's tenant only (404 for another tenant's id). 409 `last_key_required` when it is the tenant's last active key; create another key first.
 
 POST /subscriptions
 
@@ -45,8 +49,8 @@ Headers: X-API-Key, Idempotency-Key (required, 8–128 chars; missing/malformed 
 
 GET /usage/history
 
-Query: limit (1–100, default 20), cursor (keyset on requested_at, id), optional from, to (ISO UTC). Response: {"items": [...], "next_cursor": "..."}. Always filtered by caller's tenant_id.
+Query: limit (1–100, default 20), cursor (keyset on requested_at, id), optional from, to (ISO UTC). A bad cursor or `from > to` returns 422 `validation_error`. Response: {"items": [...], "next_cursor": "..."}. Always filtered by caller's tenant_id.
 
 POST /webhooks/stripe
 
-Reads raw body; verifies signature with STRIPE_WEBHOOK_SECRET; inserts into webhook_events (unique event_id); dispatches handler; 200 on success or duplicate. Never returns 402.
+Reads raw body; verifies signature with STRIPE_WEBHOOK_SECRET; a bad signature returns 400 `invalid_signature`, a missing secret returns 503 `webhook_unavailable`; inserts into webhook_events (unique event_id); dispatches handler; 200 on success or duplicate, 500 on handler failure so Stripe retries. Never returns 402.
