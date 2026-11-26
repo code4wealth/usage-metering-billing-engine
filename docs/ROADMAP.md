@@ -30,6 +30,7 @@ Phase 0 exit checklist
 ☐ Open questions D-1…D-10 answered
 ☐ Owner confirms scope
 ☐ Repo created on D: drive and PRD committed
+☐ Git history scanned for secrets before any code is pushed
 
 Phase 1 preview (first implementation task)
 

@@ -29,6 +29,7 @@ D-6 Canceled subscriptions fall back to Free limits when customer.subscription.d
 D-7 Owner creates the Stripe test Pro price and shares only the price ID in Phase 11; never ask for secret keys Owner-approved; Phase 11 startup/script check rejects PRO_PRICE_MICRO_USD not a multiple of 10_000, compares unit_amount*10_000 with it, requires currency=usd and monthly recurring; mocked in tests, never inside /health
 D-8 Rejected 402/429 requests are structured log lines only; no rejected-rows table and no ledger row. Failed 401 auth logs request_id and reason only, never the presented key or prefix Owner-approved; TC-D8-01 planned; blocked-request analysis needs the log store
 D-9 Per-key rate limit: RATE_LIMIT_PER_MINUTE, in-memory fixed window per key, single-instance only, plus a per-IP limit on POST /tenants; 429 rate_limit_exceeded with short Retry-After Owner-approved; separate from quota codes
+D-10 Repository name `usage-metering-billing-engine`, public Owner-approved; matches the deliverable and the existing GitHub clone
 
 Proposed (change if you disagree)
 
@@ -43,6 +44,5 @@ P-6 Account/read endpoints stay open during 402 states Customer must be able to 
 Open questions (need your answer)
 
 ID Question My default if you don't decide
-D-10 Repo name and visibility: usage-metering-billing-engine, public? Yes
 
 Capstone brief: no exact price, rates or invoice rules in the brief; I will choose values. PRO_PRICE_MICRO_USD=20000000 ($20) is a labelled dev placeholder in .env.example; token rates remain unset until chosen.
