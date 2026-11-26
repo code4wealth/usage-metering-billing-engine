@@ -154,7 +154,7 @@ sequenceDiagram
         A->>DB: ROLLBACK
         A-->>C: 409 idempotency_in_progress
     end
-    A->>DB: UPDATE idempotency SET state='completed', status/body WHERE owner=:owner RETURNING
+    A->>DB: UPDATE idempotency SET state='completed', completed_at=now(), expires=completed_at+retention, status/body WHERE owner=:owner RETURNING
     alt 0 rows (stale owner lost the lease)
         A->>DB: ROLLBACK (no ledger row, no counter change)
         A-->>C: 409 idempotency_in_progress

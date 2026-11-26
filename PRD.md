@@ -57,7 +57,7 @@ Plan Calls / month Tokens / month Price
 Free 1,000 100,000 None
 Pro 50,000 5,000,000 Configurable (PRO_PRICE_MICRO_USD, plus Stripe Price ID in env). No default invented.
 
-Billing period: UTC calendar month.
+Billing period: UTC calendar month. Quota period and Retry-After use the UTC calendar month, independent of Stripe's billing period; Stripe supplies payment status only (A-10).
 
 4.3 Authentication
 
@@ -120,7 +120,7 @@ FR-15 (Replay and reuse) A completed row with the same hash returns its stored s
 
 FR-16 (Concurrency) An `in_progress`, unexpired claim with the same hash returns 409 `idempotency_in_progress` without touching quota or the ledger. An expired claim with the same hash may be taken over only by a conditional `UPDATE ... WHERE state='in_progress' AND expires_at < now() RETURNING` that replaces the owner token and refreshes the 60-second lease; zero rows means another worker won → 409. An `IntegrityError` on the ledger's unique `(tenant_id, idempotency_key)` also maps to 409 `idempotency_in_progress`, with a test proving no second usage row is created.
 
-FR-17 (Completion, release, crash safety) Billing status is re-checked inside the usage transaction, which then performs the atomic counter increment, ledger insert, and claim completion as one all-or-nothing unit. The completion UPDATE is conditional on the current `owner_token` and must affect exactly one row, otherwise the transaction rolls back. On 402 or 429 the claim is released with a committed `DELETE ... WHERE owner_token=:owner`, with no counter change or ledger row. A crash leaves a claim that expires after 60 seconds and can be taken over; the owner-token condition plus the ledger unique constraint guarantee at most one usage record per key. Idempotency keys are scoped per tenant.
+FR-17 (Completion, release, crash safety) Billing status is re-checked inside the usage transaction, which then performs the atomic counter increment, ledger insert, and claim completion as one all-or-nothing unit. Completion sets `state='completed'`, `completed_at=now()` and `expires_at = completed_at + IDEMPOTENCY_RETENTION_HOURS` (default 24) in that same transaction; it is conditional on the current `owner_token` and must affect exactly one row, otherwise the transaction rolls back. On 402 or 429 the claim is released with a committed `DELETE ... WHERE owner_token=:owner`, with no counter change or ledger row. A crash leaves a claim whose 60-second lease can be taken over; the owner-token condition plus the ledger unique constraint guarantee at most one usage record per key. `expires_at` is the lease while `in_progress` and the retention deadline once `completed`; cleanup deletes only expired completed rows, so a retry after the retention window is a new request. Idempotency keys are scoped per tenant.
 
 Pricing and billing
 
@@ -194,6 +194,7 @@ Method Path Auth Purpose
 GET /health, /health/ready None Liveness/readiness
 POST /tenants None (rate-limited) Register tenant + first key
 GET/PATCH /tenants/me Key Own profile
+GET /tenants/{tenant_id} Key Own profile by ID (GET only) 200 401, 404 not_found
 POST/GET/DELETE /api-keys Key Manage keys
 GET /plans None List plans
 POST /subscriptions Key Start Pro checkout
@@ -203,7 +204,7 @@ GET /usage, /usage/history Key Usage reports
 GET /billing/invoices, /billing/summary Key Billing reports
 POST /webhooks/stripe Stripe signature Provider events
 
-Note: GET /tenants/{tenant_id} from the starting spec becomes /tenants/me plus a path-ID variant that returns 404 for any ID other than the caller's. See D-4.
+Note: the path-ID variant is GET only and returns 404 `not_found` for any ID other than the caller's; PATCH remains /tenants/me only (D-4).
 
 11. Acceptance criteria
 
@@ -248,3 +249,5 @@ Public GitHub repo, README, API docs, ER/architecture diagrams, test report, lim
 15. Out of scope / future
 
 Usage-based overage invoicing, multiple currencies, admin UI, per-endpoint pricing, Redis rate limiting, outbox pattern for emails, partitioned usage tables.
+
+v1 limitation (D-3): token counts are supplied up front by `/v1/usage/simulate`, so the quota check is exact. Real AI inference does not know output tokens before processing; a production version would need a reservation/true-up design, which is future work.

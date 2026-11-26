@@ -85,6 +85,10 @@ erDiagram
         int response_status
         jsonb response_body
         timestamptz expires_at
+        uuid owner_token
+        timestamptz claimed_at
+        int attempt
+        timestamptz completed_at
     }
     INVOICES {
         uuid id PK
@@ -130,7 +134,7 @@ Purpose: credentials. Key format (proposed): ume_<prefix8>_<secret43> where the 
 
 plans
 
-Purpose: Free and Pro definitions. Limits live here, not in code. Seeded by scripts/seed_plans.py. CHECK: limits ≥ 0, prices ≥ 0. Free base_price_micro_usd = 0. Pro price is read from config at seed time (no invented default).
+Purpose: Free and Pro definitions. Limits live here, not in code. Seeded by scripts/seed_plans.py. CHECK: limits ≥ 0, prices ≥ 0. Free base_price_micro_usd = 0. Pro price is read from config at seed time (no invented default). D-1: these limits hard-stop both plans with 429; no overage in v1.
 
 subscriptions
 
@@ -158,11 +162,11 @@ Purpose: audit trail and billing source. Constraints: request_id unique; total_t
 
 idempotency_records
 
-Purpose: dedupe retries. Unique: (tenant_id, idem_key). request_hash = SHA-256 of canonical body+method+path. state IN ('in_progress','completed'). expires_at (e.g. 24h) for cleanup.
+Purpose: dedupe retries. Unique: (tenant_id, idem_key). request_hash = SHA-256 of canonical body+method+path. state IN ('in_progress','completed'). `expires_at` has two meanings: while `in_progress` it is the 60-second lease (`IDEMPOTENCY_CLAIM_TTL_SECONDS`); once `completed` it is the retention deadline, set to `completed_at + IDEMPOTENCY_RETENTION_HOURS` (default 24) in the same transaction as the usage record. New columns: owner_token (UUID4, rotates on takeover), claimed_at, attempt (INTEGER NOT NULL DEFAULT 0), completed_at. Index: (state, expires_at). The claim INSERT commits before the usage transaction so other connections can see in_progress (FR-16). A different request hash on any state returns 422 and never takes over. A 402/429 releases the claim by DELETE with owner_token; a crash leaves the lease to expire. The cleanup job deletes **only expired completed rows** (state='completed' AND expires_at < now()); it never deletes an in-progress claim. Retries after the retention window are new requests. The ledger's unique (tenant_id, idempotency_key) plus owner-token conditional completion prevent duplicate usage rows.
 
 invoices / payments
 
-Purpose: internal billing history mirrored from Stripe. invoices unique (tenant_id, period_start); status IN ('draft','open','paid','past_due','void'). payments references invoice. total_micro_usd = usage_cost_micro_usd + base_fee_micro_usd (CHECK).
+Purpose: internal billing history mirrored from Stripe. invoices unique (tenant_id, period_start); status IN ('draft','open','paid','past_due','void'). payments references invoice. total_micro_usd = usage_cost_micro_usd + base_fee_micro_usd (CHECK). D-2: Pro is flat-fee only; for paid plans usage_cost_micro_usd = 0 and total_micro_usd = base_fee_micro_usd. Usage cost is stored on usage_records and shown in /billing/summary for reporting only, never added to the invoice total; the existing CHECK still holds.
 
 webhook_events
 
