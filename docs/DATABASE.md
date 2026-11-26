@@ -203,7 +203,7 @@ Money
 cost_µ$ = (input_tokens * input_rate + output_tokens * output_rate + 500_000) // 1_000_000
 ```
 
-where rates are µ$ per 1M tokens. The +500_000 implements half-up rounding. Rates are configuration; no real-world prices are assumed.
+where rates are µ$ per 1M tokens. The +500_000 implements half-up rounding. Rates are configuration; no real-world prices are assumed. Dev placeholders in `.env.example`: 1,500,000 µ$/1M input and 3,500,000 µ$/1M output — arbitrary dev values, deliberately not multiples of 1,000,000 so half-up rounding is exercised.
 
 Sample records (illustrative placeholders)
 

@@ -42,10 +42,10 @@ POST /v1/usage/simulate
 
 Headers: X-API-Key, Idempotency-Key (required, 8–128 chars; missing/malformed → 422 validation_error). Request: {"input_tokens": 120, "output_tokens": 380} (each 0–1,000,000; at least one > 0) Response 200:
 
-{"request_id": "...", "total_tokens": 500, "cost_micro_usd": 0,
+{"request_id": "...", "total_tokens": 500, "cost_micro_usd": 1510,
  "usage": {"api_calls_used": 1, "api_calls_limit": 1000, "tokens_used": 500, "tokens_limit": 100000}}
 
-(cost_micro_usd depends on configured rates.) Status: 401 invalid_api_key · 402 billing_past_due/billing_unpaid (read-only pre-check and in-transaction re-check) · 409 idempotency_in_progress (fresh in-progress claim, failed stale takeover, or ledger unique (tenant_id, idempotency_key) conflict) · 422 validation_error (including missing Idempotency-Key) / idempotency_key_reuse (different hash in any state, even in_progress or expired) · 429 quota_calls_exceeded/quota_tokens_exceeded with Retry-After. D-1: hard-stop 429 applies to both Free and Pro. Replay: same key + same body returns the stored response with Idempotency-Replayed: true; no new usage. Completed responses are retained IDEMPOTENCY_RETENTION_HOURS (default 24); after cleanup the same key is a new request. DB ops: see request lifecycle in ARCHITECTURE.md §6.
+(cost_micro_usd is 1510 µ$ only under the dev placeholders INPUT_RATE_MICRO_PER_MILLION=1500000 and OUTPUT_RATE_MICRO_PER_MILLION=3500000; in general it depends on configured rates.) Status: 401 invalid_api_key · 402 billing_past_due/billing_unpaid (read-only pre-check and in-transaction re-check) · 409 idempotency_in_progress (fresh in-progress claim, failed stale takeover, or ledger unique (tenant_id, idempotency_key) conflict) · 422 validation_error (including missing Idempotency-Key) / idempotency_key_reuse (different hash in any state, even in_progress or expired) · 429 quota_calls_exceeded/quota_tokens_exceeded with Retry-After. D-1: hard-stop 429 applies to both Free and Pro. Replay: same key + same body returns the stored response with Idempotency-Replayed: true; no new usage. Completed responses are retained IDEMPOTENCY_RETENTION_HOURS (default 24); after cleanup the same key is a new request. DB ops: see request lifecycle in ARCHITECTURE.md §6.
 
 GET /usage/history
 

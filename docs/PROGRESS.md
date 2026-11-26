@@ -40,6 +40,15 @@ Planned test cases (Planned, not written; no results claimed)
 - `TC-A15-01 tied_event_created_uses_state_ranking_or_refetch`: two webhook events with identical Stripe `created` arrive out of order; the handler applies the event whose state is further along (`checkout_pending` < `active` < `past_due` < `unpaid` < `canceled`) or re-fetches from Stripe; final subscription state is never less advanced.
 - `TC-CFG-01 config_errors_never_print_values`: missing/invalid variables raise errors naming only the variable; no error message or log line contains a configured value (including `DATABASE_URL` and Stripe secrets).
 
+Pricing known-answer cases (Planned, not written; explicit rates passed directly into `app.services.pricing`, never read from `.env`):
+
+- `TC-PRICE-01 input_half_up`: 1 input token at 1,500,000 µ$/1M → 2 µ$ (half-up).
+- `TC-PRICE-02 output_half_up`: 1 output token at 3,500,000 µ$/1M → 4 µ$.
+- `TC-PRICE-03 dev_rate_sample`: 120 input + 380 output at 1,500,000 / 3,500,000 µ$/1M → 1,510 µ$.
+- `TC-PRICE-04 zero_tokens`: 0 input + 0 output → 0 µ$.
+- `TC-PRICE-05 rounds_down`: 1 input token at 1,200,000 µ$/1M → 1 µ$ (remainder 200,000 < 500,000).
+- `TC-PRICE-06 max_tokens_integer_only`: 1,000,000 input + 1,000,000 output at dev rates → 5,000,000 µ$; result is an integer with no float use and no overflow.
+
 Technical decisions
 
 See DECISIONS.md.

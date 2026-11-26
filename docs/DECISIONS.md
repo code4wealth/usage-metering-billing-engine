@@ -46,4 +46,4 @@ Open questions (need your answer)
 
 ID Question My default if you don't decide
 
-Capstone brief: no exact price, rates or invoice rules in the brief; I will choose values. PRO_PRICE_MICRO_USD=20000000 ($20) is a labelled dev placeholder in .env.example; token rates remain unset until chosen.
+Capstone brief: no exact price, rates or invoice rules in the brief; I will choose values. PRO_PRICE_MICRO_USD=20000000 ($20) is a labelled dev placeholder in .env.example. Dev token rates: INPUT_RATE_MICRO_PER_MILLION=1500000 and OUTPUT_RATE_MICRO_PER_MILLION=3500000, arbitrary dev values (not real prices), off-round to exercise half-up rounding.

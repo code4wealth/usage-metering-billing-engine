@@ -76,7 +76,7 @@ Tenant ID, request ID, endpoint, timestamp, call count, input tokens, output tok
 
 4.6 Money
 
-Integer micro-dollars (BIGINT). No floating-point money.
+Integer micro-dollars (BIGINT). No floating-point money. Dev placeholders: input rate 1,500,000 µ$ per 1M tokens and output rate 3,500,000 µ$ per 1M tokens — arbitrary dev values, not real prices, deliberately off-round to exercise half-up rounding.
 
 4.7 Quota
 
