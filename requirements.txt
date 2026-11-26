@@ -1,0 +1,15 @@
+# Versions will be pinned in Phase 1 after install (pip freeze), not guessed here.
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlalchemy
+alembic
+psycopg[binary]
+stripe
+apscheduler
+python-dotenv
+pytest
+pytest-asyncio
+pytest-cov
+httpx

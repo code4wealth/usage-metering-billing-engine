@@ -1,0 +1,1 @@
+Review the files changed since the last commit against CLAUDE.md section 6 (money, security, multi-tenancy, concurrency, code). List violations by severity, explain each in simple language, and suggest fixes. Do not edit files unless asked.
