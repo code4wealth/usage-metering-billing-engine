@@ -15,7 +15,7 @@ Method + URL Auth Purpose Success Errors
 8 GET /api-keys Key List keys (prefix, label, status only) 200 401
 9 DELETE /api-keys/{id} Key Revoke key 204 401, 404
 10 GET /plans None List plans and limits 200 n/a
-11 POST /subscriptions Key Start Stripe Checkout for Pro; returns checkout URL 201 401, 409 already Pro, 422
+11 POST /subscriptions Key Start/reuse Stripe Checkout for Pro; returns URL 201 new / 200 existing open session 401, 409 subscription_already_pro, 422 validation_error, 503 checkout_unavailable
 12 GET /subscriptions/current Key Plan, status, period 200 401
 13 POST /v1/usage/simulate Key + Idempotency-Key One billable call 200 401, 402, 409, 422 (validation_error / idempotency_key_reuse), 429
 14 GET /usage Key Current-period used vs limit 200 401
@@ -29,6 +29,10 @@ Key endpoints in detail
 POST /tenants
 
 Request: {"name": "Acme Labs", "email": "dev@acme.example"} Validation: name 1–100 chars; valid email; unique email. Response 201: {"tenant_id": "...", "api_key": "ume_xxxxxxxx_...", "plan": "free", "note": "Store this key now; it will not be shown again."} DB: insert tenant, subscription (Free, active, current UTC month), api_key (hash) in one transaction.
+
+POST /subscriptions
+
+Auth: X-API-Key; no body required. First call creates the Stripe customer, saves `tenants.stripe_customer_id`, creates a Checkout session with `client_reference_id` and `metadata.tenant_id`, sets status `checkout_pending`, stores `stripe_checkout_session_id`, and returns 201 with the URL. While pending, the session is retrieved from Stripe and its URL returned with 200 only when `status='open'`; if it is not open, a new session replaces it and the old open session is expired. 401 `invalid_api_key`. 409 `subscription_already_pro` when already active Pro. 422 `validation_error` for invalid input only. 503 `checkout_unavailable` for Stripe failures or missing Stripe config (error body never contains secrets). `checkout.session.completed` confirms only with `payment_status='paid'`; `checkout.session.expired` returns the tenant to active Free. While pending, limits come from the Free plan (A-11, A-16).
 
 POST /v1/usage/simulate
 

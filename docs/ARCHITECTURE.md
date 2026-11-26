@@ -195,7 +195,7 @@ DIAGRAM SOURCE (Mermaid)
 stateDiagram-v2
     [*] --> active_free: tenant registered
     active_free --> checkout_pending: POST /subscriptions
-    checkout_pending --> active_pro: checkout.session.completed / invoice.paid
+    checkout_pending --> active_pro: checkout.session.completed (payment_status=paid) or invoice.paid, first applied wins
     active_pro --> past_due: invoice.payment_failed
     past_due --> active_pro: invoice.paid
     past_due --> unpaid: retries exhausted (subscription.updated)
@@ -241,7 +241,7 @@ flowchart TD
     H -- handler error --> F[Mark failed, return 500 so Stripe retries]
 ```
 
-Equal timestamps are treated as not newer, so a tie is a no-op (A-15).
+On equal `event.created`, apply the event whose state is further along (`checkout_pending` < `active` < `past_due` < `unpaid` < `canceled`) or re-fetch from Stripe (A-15, TC-A15-01).
 
 11. Folder structure
 

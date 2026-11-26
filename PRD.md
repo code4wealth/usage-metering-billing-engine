@@ -102,7 +102,7 @@ Plans and subscriptions
 FR-5 GET /plans lists Free and Pro with limits (and configured Pro price).
 FR-6 Tenant has exactly one current subscription with a status and billing period.
 FR-7 Upgrade to Pro via Stripe Checkout (test mode); status updates arrive via webhooks.
-FR-8 Subscription statuses: active, past_due, unpaid, canceled.
+FR-8 Subscription statuses: `checkout_pending`, active, past_due, unpaid, canceled. `checkout_pending` is set by `POST /subscriptions` until a webhook confirms payment; it resolves limits from the Free plan (A-11) and 402 does not apply (A-16).
 
 Metering and quota
 
@@ -132,8 +132,8 @@ FR-21 Invoices/payments mirror Stripe state via webhooks only, keyed by `stripe_
 Webhooks (Stripe)
 
 FR-22 POST /webhooks/stripe verifies Stripe-Signature on the raw body.
-FR-23 Each Stripe event.id processed at most once (unique `(provider, event_id)` in `webhook_events`). The event's `created` timestamp is stored as `stripe_event_created`; a handler applies an update only when the event is strictly newer than the target's `last_event_created`, otherwise it stores the event as `ignored` and returns 200 (A-15).
-FR-24 Handled events (initial set): checkout.session.completed, customer.subscription.updated, customer.subscription.deleted, invoice.paid, invoice.payment_failed. Handlers are state-based, not delta-based, and compare `stripe_event_created` with `last_event_created` on `invoices`/`subscriptions` before writing (A-15). `customer.subscription.deleted` takes effect when the event arrives (at the end of the paid period if `cancel_at_period_end`).
+FR-23 Each Stripe event.id processed at most once (unique `(provider, event_id)` in `webhook_events`). The event's `created` timestamp is stored as `stripe_event_created`; a handler applies an update only when the event is newer than the target's `last_event_created`, otherwise it stores the event as `ignored` and returns 200. On equal timestamps, apply the event whose state is further along (`checkout_pending` < `active` < `past_due` < `unpaid` < `canceled`) or re-fetch authoritative state from Stripe (A-15, TC-A15-01).
+FR-24 Handled events (initial set): checkout.session.completed, checkout.session.expired, customer.subscription.updated, customer.subscription.deleted, invoice.paid, invoice.payment_failed. Handlers are state-based, not delta-based, compare `stripe_event_created` with `last_event_created`, and match an event to a tenant first by Stripe customer id (`tenants.stripe_customer_id`) then by Stripe subscription id (`subscriptions.stripe_subscription_id`) (A-16). `checkout.session.completed` confirms only when `payment_status='paid'`; `checkout.session.expired` reverts `checkout_pending` to `active` Free (A-15). The first applied of `checkout.session.completed` / `invoice.paid` moves the tenant to active Pro; the later one is a no-op for subscription status but still updates the invoice/payment mirror. `customer.subscription.deleted` takes effect when the event arrives (at the end of the paid period if `cancel_at_period_end`).
 FR-25 Unknown event types are stored and acknowledged (200), not errored.
 
 Reporting
@@ -180,6 +180,7 @@ Status When error.code
 422 Invalid body, or key reused with different body validation_error / idempotency_key_reuse
 429 Calls exhausted / tokens exhausted quota_calls_exceeded / quota_tokens_exceeded
 429 Rate-limit exceeded (per key or per IP) rate_limit_exceeded
+503 Stripe Checkout unavailable or missing Stripe config checkout_unavailable
 
 Rules:
 
@@ -187,8 +188,9 @@ Rules:
 Limits are resolved from the tenant's current subscription and plan on every request; canceled falls back to Free limits and there is no counter reset on downgrade (A-11).
 If both quota limits fail, `quota_calls_exceeded` is returned (A-12).
 402 applies only to metered endpoints (/v1/*). Read-only account endpoints (/usage, /billing/*, /subscriptions/current) stay accessible so a customer can see why they are blocked and pay.
-Webhook endpoints never return 402.
+Webhook endpoints never return 402. 503 `checkout_unavailable` is only for `POST /subscriptions` Stripe failures/missing config; 422 `validation_error` remains for invalid input only.
 canceled subscriptions fall back to Free limits when `customer.subscription.deleted` arrives (at the end of the paid period if `cancel_at_period_end`); because there is no counter reset, a tenant already over Free limits gets 429 until the next UTC month (D-6, A-11).
+While `checkout_pending`, limits resolve from the Free plan (A-11) and 402 does not apply; Pro limits start when a paid `checkout.session.completed` or `invoice.paid` first confirms payment (A-16).
 Error body shape: {"error": {"code": "...", "message": "...", "request_id": "..."}}.
 
 10. Endpoints (summary; full contract in docs/API.md)

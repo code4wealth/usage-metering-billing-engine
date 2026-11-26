@@ -37,6 +37,7 @@ Planned test cases (Planned, not written; no results claimed)
 
 - `TC-D6-01 canceled_subscription_falls_back_to_free_limits_no_counter_reset`: when `customer.subscription.deleted` arrives (at paid-period end if `cancel_at_period_end`), a tenant whose current-month usage already exceeds Free limits receives 429 `quota_calls_exceeded` on `/v1/usage/simulate` until the next UTC month; no counter reset and no 402.
 - `TC-D8-01 rejected_requests_log_fields_and_no_plaintext_key`: 402 and 429 emit structured log lines containing `request_id`, `tenant_id`, endpoint, error code and UTC timestamp; a failed 401 logs `request_id` and reason only; no log line contains a plaintext API key or its prefix.
+- `TC-A15-01 tied_event_created_uses_state_ranking_or_refetch`: two webhook events with identical Stripe `created` arrive out of order; the handler applies the event whose state is further along (`checkout_pending` < `active` < `past_due` < `unpaid` < `canceled`) or re-fetches from Stripe; final subscription state is never less advanced.
 
 Technical decisions
 

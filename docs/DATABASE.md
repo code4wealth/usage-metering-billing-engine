@@ -53,6 +53,7 @@ erDiagram
         smallint plan_id FK
         text status
         text stripe_subscription_id UK
+        text stripe_checkout_session_id UK
         timestamptz current_period_start
         timestamptz current_period_end
         timestamptz last_event_created
@@ -140,7 +141,7 @@ Tables
 
 tenants
 
-Purpose: the customer account (also the isolation boundary). Constraints: email unique; stripe_customer_id unique, nullable. Index: unique on email. Why no users table: v1 has no human logins; tenant + API keys is enough.
+Purpose: the customer account (also the isolation boundary). Constraints: email unique; stripe_customer_id unique, nullable. Index: unique on email. Why no users table: v1 has no human logins; tenant + API keys is enough. `stripe_customer_id` is created in `POST /subscriptions` before Checkout; webhook handlers match events by customer id first, then by subscription id (A-16).
 
 api_keys
 
@@ -152,7 +153,7 @@ Purpose: Free and Pro definitions. Limits live here, not in code. Seeded by scri
 
 subscriptions
 
-Purpose: a tenant's plan + billing status. CHECKs: status IN ('active','past_due','unpaid','canceled'). Constraint: partial unique index on (tenant_id) WHERE status <> 'canceled' so a tenant has one live subscription. FKs: tenant_id, plan_id. `last_event_created` stores the newest applied Stripe event timestamp; handlers ignore older or equal events (A-15). `customer.subscription.deleted` sets `status='canceled'` at event time (end of paid period if `cancel_at_period_end`); Free limits then apply with no counter reset (D-6, A-11).
+Purpose: a tenant's plan + billing status. CHECKs: status IN ('checkout_pending','active','past_due','unpaid','canceled'). Constraint: partial unique index on (tenant_id) WHERE status <> 'canceled' so a tenant has one live subscription. FKs: tenant_id, plan_id. `last_event_created` stores the newest applied Stripe event timestamp; handlers ignore older or equal events (A-15). `customer.subscription.deleted` sets `status='canceled'` at event time (end of paid period if `cancel_at_period_end`); Free limits then apply with no counter reset (D-6, A-11). `stripe_checkout_session_id` is nullable and unique when present; Checkout sessions set `client_reference_id` and `metadata.tenant_id`. A pending session is retrieved from Stripe and reused only while `status='open'`; if a replacement session is created, the old open session is expired (A-16). `checkout.session.expired` reverts `checkout_pending` to `active` Free and clears the field.
 
 usage_counters
 
@@ -188,7 +189,7 @@ Purpose: idempotent UTC calendar-month summary written by the APScheduler close 
 
 webhook_events
 
-Purpose: dedupe + audit of provider events. Unique: (provider, event_id). status IN ('received','processed','failed','ignored'). `stripe_event_created` stores Stripe's `created` timestamp in UTC; handlers compare it with `last_event_created` on invoices/subscriptions and ignore older or equal events (A-15).
+Purpose: dedupe + audit of provider events. Unique: (provider, event_id). status IN ('received','processed','failed','ignored'). `stripe_event_created` stores Stripe's `created` timestamp in UTC; handlers compare it with `last_event_created` on invoices/subscriptions and ignore older events. On equal timestamps they apply the event whose state is further along (`checkout_pending` < `active` < `past_due` < `unpaid` < `canceled`) or re-fetch from Stripe (A-15, TC-A15-01).
 
 Multi-tenant isolation
 
