@@ -70,7 +70,15 @@ Concurrency
 
 - Quota check + increment is one atomic conditional UPDATE ... RETURNING, never read-then-write.
 - Idempotency uses a unique constraint + INSERT ... ON CONFLICT, not an app-level "if exists" check.
-- One request = one DB transaction for counter + usage record + idempotency completion.
+- A billable request uses **two short transactions, not one**. The old rule "one request = one DB transaction for counter + usage record + idempotency completion" is retired: an `in_progress` row committed in the same transaction as the usage row is invisible to every other connection until commit, so FR-16 (409) would be unreachable.
+- `Idempotency-Key` is required (8–128 chars); missing or malformed → 422 `validation_error` before any claim or write.
+- Gate order: authenticate → **read-only billing gate** (402, no writes) → claim transaction → usage transaction, which **re-checks billing status inside the transaction** because Stripe webhooks can change status between steps.
+- Claim transaction (commits immediately): `INSERT ... ON CONFLICT DO NOTHING` on `(tenant_id, idem_key)` with `state='in_progress'`, random `owner_token` (UUID4), `expires_at = now() + 60s`, and the SHA-256 request hash. On conflict, read the row: `completed` + same hash → replay with `Idempotency-Replayed: true`; **any state with a different hash → 422 `idempotency_key_reuse`** (never take over, never 409); `in_progress` + same hash + not expired → 409; `in_progress` + same hash + expired → conditional takeover `UPDATE ... WHERE state='in_progress' AND expires_at < now() RETURNING` with a new owner and fresh lease (zero rows → 409). If the insert conflicts but a follow-up read finds no row (a 402/429 release deleted it between statements), retry the whole claim step at most **3 attempts**, then return 409.
+- Usage transaction (all-or-nothing): re-check billing gate → atomic quota increment → ledger insert → claim completion. The completion `UPDATE ... SET state='completed', response_status, response_body WHERE idempotency_id=:id AND owner_token=:owner AND state='in_progress'` must affect exactly one row; zero rows → roll back the whole transaction and return 409. An `IntegrityError` on the ledger's unique `(tenant_id, idempotency_key)` also maps to 409 `idempotency_in_progress`; a planned FR-17 test must prove no second usage row exists.
+- On **402 or 429**: roll back the usage transaction, then release the claim with a committed `DELETE ... WHERE idempotency_id=:id AND owner_token=:owner`. No ledger row or counter increment survives a rejected request. A 401 (bad key) happens before claiming, so no claim exists.
+- **Crash recovery:** if the process dies after claiming but before completing, the 60-second lease expires and a later request may take over. Takeover replaces `owner_token` and refreshes `expires_at`; a stale worker's completion affects zero rows and rolls back. The ledger's unique `(tenant_id, idempotency_key)` constraint is the second, database-level guard against duplicate usage.
+- `60s` is `IDEMPOTENCY_CLAIM_TTL_SECONDS` in `.env.example` (default 60 in v1). All lease times use PostgreSQL `now()`, never application-local clocks.
+- Replays never write to the ledger or the counters. Store only the request hash, response status and response snapshot; never log plaintext keys or raw bodies.
 
 Code
 

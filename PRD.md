@@ -114,10 +114,13 @@ FR-13 Concurrent requests must never let usage exceed limits.
 
 Idempotency
 
-FR-14 Same key + same payload → replay stored response, Idempotency-Replayed: true, no new usage.
-FR-15 Same key + different payload → 422.
-FR-16 Same key while first request in progress → 409.
-FR-17 Idempotency keys are scoped per tenant.
+FR-14 (Claim and ownership) `Idempotency-Key` is required (8–128 chars); missing or malformed → 422 `validation_error` before any claim. After a read-only billing gate (402), every billable request creates a claim in a short, separately committed transaction: `INSERT ... ON CONFLICT DO NOTHING` on `(tenant_id, Idempotency-Key)` with `state='in_progress'`, a random `owner_token`, a SHA-256 hash of canonical method+path+body, and `expires_at = now() + 60s`. If the insert conflicts but the row is gone when read (released by a 402/429 in between), retry the claim at most 3 times, then return 409. No billing, quota, or ledger write happens in the claim transaction.
+
+FR-15 (Replay and reuse) A completed row with the same hash returns its stored status/body with `Idempotency-Replayed: true` and creates no usage record. A different hash on **any** state, including `in_progress` or expired, returns 422 `idempotency_key_reuse` and never takes over and never returns 409. Raw bodies and keys are not logged; only the hash and response snapshot are stored.
+
+FR-16 (Concurrency) An `in_progress`, unexpired claim with the same hash returns 409 `idempotency_in_progress` without touching quota or the ledger. An expired claim with the same hash may be taken over only by a conditional `UPDATE ... WHERE state='in_progress' AND expires_at < now() RETURNING` that replaces the owner token and refreshes the 60-second lease; zero rows means another worker won → 409. An `IntegrityError` on the ledger's unique `(tenant_id, idempotency_key)` also maps to 409 `idempotency_in_progress`, with a test proving no second usage row is created.
+
+FR-17 (Completion, release, crash safety) Billing status is re-checked inside the usage transaction, which then performs the atomic counter increment, ledger insert, and claim completion as one all-or-nothing unit. The completion UPDATE is conditional on the current `owner_token` and must affect exactly one row, otherwise the transaction rolls back. On 402 or 429 the claim is released with a committed `DELETE ... WHERE owner_token=:owner`, with no counter change or ledger row. A crash leaves a claim that expires after 60 seconds and can be taken over; the owner-token condition plus the ledger unique constraint guarantee at most one usage record per key. Idempotency keys are scoped per tenant.
 
 Pricing and billing
 

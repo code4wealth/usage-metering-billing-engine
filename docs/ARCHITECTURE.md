@@ -98,34 +98,73 @@ sequenceDiagram
     participant DB as PostgreSQL
     C->>A: POST + X-API-Key + Idempotency-Key
     A->>DB: lookup key by prefix, compare hash
-    alt invalid / revoked
-        A-->>C: 401
+    alt missing / invalid / revoked key
+        A-->>C: 401 (no claim)
     end
-    A->>DB: load subscription
+    alt Idempotency-Key missing or malformed
+        A-->>C: 422 validation_error (no claim)
+    end
+    A->>DB: read-only billing gate: load subscription
     alt past_due / unpaid
-        A-->>C: 402
+        A-->>C: 402 (no claim created)
     end
+    Note over A,DB: Transaction 1 - claim, COMMITTED before business work; max 3 attempts if the row disappears
+    loop at most 3 attempts when conflict read finds no row
+        A->>DB: BEGIN
+        A->>DB: INSERT claim (tenant,key,hash,owner,expires=now()+60s) ON CONFLICT DO NOTHING
+        alt new row
+            A->>DB: COMMIT (in_progress now visible to others)
+        else conflict, completed + same hash
+            A->>DB: ROLLBACK
+            A-->>C: 200 replay + Idempotency-Replayed: true
+        else conflict, any state + different hash
+            A->>DB: ROLLBACK
+            A-->>C: 422 idempotency_key_reuse (never takeover, never 409)
+        else conflict, in_progress + same hash + not expired
+            A->>DB: ROLLBACK
+            A-->>C: 409 idempotency_in_progress
+        else conflict, in_progress + same hash + expired
+            A->>DB: UPDATE claim SET owner=new, expires=now()+60s WHERE state='in_progress' AND expires_at < now() RETURNING
+            alt one row returned
+                A->>DB: COMMIT (lease taken over)
+            else zero rows
+                A->>DB: ROLLBACK
+                A-->>C: 409 idempotency_in_progress
+            end
+        else conflict but row deleted before read
+            A->>DB: ROLLBACK (retry, attempt++)
+        end
+    end
+    Note over A,DB: Transaction 2 - usage, all-or-nothing
     A->>DB: BEGIN
-    A->>DB: INSERT idempotency (tenant,key) ON CONFLICT DO NOTHING
-    alt conflict, completed, same hash
-        A-->>C: replay stored response
-    else conflict, different hash
-        A-->>C: 422
-    else conflict, in progress
-        A-->>C: 409
+    A->>DB: re-check subscription status inside the transaction
+    alt now past_due / unpaid
+        A->>DB: ROLLBACK
+        A->>DB: DELETE claim WHERE owner=:owner (commit)
+        A-->>C: 402 billing_past_due / billing_unpaid
     end
     A->>DB: UPDATE usage_counters ... WHERE within limits RETURNING
     alt 0 rows
         A->>DB: ROLLBACK
-        A-->>C: 429 + Retry-After
+        A->>DB: DELETE claim WHERE owner=:owner (commit)
+        A-->>C: 429 + Retry-After (next UTC month)
     end
     A->>DB: INSERT usage_records (cost µ$)
-    A->>DB: UPDATE idempotency (completed, response snapshot)
-    A->>DB: COMMIT
-    A-->>C: 200 + usage summary
+    alt IntegrityError on unique (tenant_id, idempotency_key)
+        A->>DB: ROLLBACK
+        A-->>C: 409 idempotency_in_progress
+    end
+    A->>DB: UPDATE idempotency SET state='completed', status/body WHERE owner=:owner RETURNING
+    alt 0 rows (stale owner lost the lease)
+        A->>DB: ROLLBACK (no ledger row, no counter change)
+        A-->>C: 409 idempotency_in_progress
+    else 1 row
+        A->>DB: COMMIT
+        A-->>C: 200 + usage summary
+    end
 ```
 
-Why one transaction: if anything fails, counter, record, and idempotency row all roll back together, so retries are safe.
+Transaction 1 makes the claim visible to other connections; that is the only reason a concurrent same-key request can receive 409. Transaction 2 keeps counter + ledger + completion atomic, so a failure or crash can never leave a half-written usage record. A different request hash on an in-progress or expired claim returns 422 and never takes over. On 402/429 the claim is released before the error is returned; on a replay no write happens. Period-rollover row creation is issue #3 and is intentionally not changed here.
 
 7. Authentication flow
 
