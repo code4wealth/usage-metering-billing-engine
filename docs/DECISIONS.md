@@ -26,6 +26,8 @@ D-3 Token counts supplied up front by /v1/usage/simulate; exact pre-check Owner-
 D-4 Both /tenants/me and GET /tenants/{tenant_id}; path-ID is GET only and returns 404 not_found for another tenant's ID Owner-approved
 D-5 Public self-signup for POST /tenants with a per-IP rate limit Owner-approved; limitations recorded: no email verification, duplicate-email 409 reveals registered emails, proxy client-IP handling must be explicit
 D-6 Canceled subscriptions fall back to Free limits when customer.subscription.deleted arrives (end of paid period if cancel_at_period_end); no counter reset, so a tenant already over Free limits gets 429 until the next UTC month Owner-approved; named test case TC-D6-01 in PROGRESS.md
+D-7 Owner creates the Stripe test Pro price and shares only the price ID in Phase 11; never ask for secret keys Owner-approved; Phase 11 startup/script check rejects PRO_PRICE_MICRO_USD not a multiple of 10_000, compares unit_amount*10_000 with it, requires currency=usd and monthly recurring; mocked in tests, never inside /health
+D-8 Rejected 402/429 requests are structured log lines only; no rejected-rows table and no ledger row. Failed 401 auth logs request_id and reason only, never the presented key or prefix Owner-approved; TC-D8-01 planned; blocked-request analysis needs the log store
 D-9 Per-key rate limit: RATE_LIMIT_PER_MINUTE, in-memory fixed window per key, single-instance only, plus a per-IP limit on POST /tenants; 429 rate_limit_exceeded with short Retry-After Owner-approved; separate from quota codes
 
 Proposed (change if you disagree)
@@ -41,8 +43,6 @@ P-6 Account/read endpoints stay open during 402 states Customer must be able to 
 Open questions (need your answer)
 
 ID Question My default if you don't decide
-D-7 Stripe test price: you create a Pro product/price in Stripe test dashboard and give me only the price ID (never secret keys)? Yes, ID goes in .env
-D-8 Should rejected (402/429) requests be logged as rejected rows in a separate table? Log only, no ledger rows
 D-10 Repo name and visibility: usage-metering-billing-engine, public? Yes
 
 Capstone brief: no exact price, rates or invoice rules in the brief; I will choose values. PRO_PRICE_MICRO_USD=20000000 ($20) is a labelled dev placeholder in .env.example; token rates remain unset until chosen.

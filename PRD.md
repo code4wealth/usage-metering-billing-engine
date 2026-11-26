@@ -109,7 +109,7 @@ Metering and quota
 FR-9 POST /v1/usage/simulate accepts input/output token counts and records one billable call.
 FR-10 Total tokens = input + output; stored explicitly.
 FR-11 Before recording, check billing status, then atomically check-and-increment calls and tokens for the current period.
-FR-12 Quota exhausted → 429 with Retry-After set to the next UTC calendar-month start (A-10); no usage record created for rejected requests (rejections are logged as rejected events only if decision D-8 is accepted). `period_start` is computed once per request in UTC. In transaction 2 the order is: re-check billing status → lazy `INSERT ... ON CONFLICT DO NOTHING` of the counter row → conditional `UPDATE ... RETURNING` (A-9). After a zero-row UPDATE, read the counter row **in the same transaction** to choose the code: calls exhausted → `quota_calls_exceeded`; otherwise tokens exhausted → `quota_tokens_exceeded`; if both are exhausted, `quota_calls_exceeded` wins (A-12).
+FR-12 Quota exhausted → 429 with Retry-After set to the next UTC calendar-month start (A-10); no usage record created for rejected requests; 402/429 rejections emit a structured log line only (no rejected-rows table, no ledger row) with `request_id`, `tenant_id`, endpoint, error code and UTC timestamp, while failed 401 auth logs `request_id` and reason only — never the presented key or prefix (D-8). `period_start` is computed once per request in UTC. In transaction 2 the order is: re-check billing status → lazy `INSERT ... ON CONFLICT DO NOTHING` of the counter row → conditional `UPDATE ... RETURNING` (A-9). After a zero-row UPDATE, read the counter row **in the same transaction** to choose the code: calls exhausted → `quota_calls_exceeded`; otherwise tokens exhausted → `quota_tokens_exceeded`; if both are exhausted, `quota_calls_exceeded` wins (A-12).
 FR-13 Concurrent requests must never let usage exceed limits.
 
 Idempotency
@@ -255,3 +255,4 @@ Usage-based overage invoicing, multiple currencies, admin UI, per-endpoint prici
 
 v1 limitation (D-3): token counts are supplied up front by `/v1/usage/simulate`, so the quota check is exact. Real AI inference does not know output tokens before processing; a production version would need a reservation/true-up design, which is future work.
 v1 signup limitation (D-5): `POST /tenants` is public and rate-limited per IP. There is no email verification; a duplicate-email 409 reveals that an email is already registered; client IP handling behind a proxy must be made explicit before relying on the per-IP limit.
+v1 limitation (D-8): blocked-request analysis (402/429) requires the log store; there is no SQL table of rejected events.

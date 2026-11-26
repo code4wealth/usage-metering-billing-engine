@@ -14,11 +14,13 @@ Phase Objective Key concepts Main outputs Suggested commit
 8 Quota enforcement atomic UPDATE, row locks, 429 counters, concurrency test feat: atomic quota enforcement
 9 Idempotency unique constraint, request hash, in-progress idempotency service feat: idempotency keys
 10 Pricing + billing µ$ math, rounding, invoices, scheduler pricing service, period close job feat: pricing and invoicing
-11 Stripe webhooks signature verify, event dedupe, state sync webhook endpoint, Checkout feat: stripe webhooks
+11 Stripe webhooks signature verify, event dedupe, state sync, price validation webhook endpoint, Checkout, startup/script price check feat: stripe webhooks
 12 Reporting pagination, aggregation usage + billing read APIs feat: usage and billing reports
 13 Automated testing unit/integration/concurrency full pytest suite + report test: full suite
 14 Dockerization Dockerfile, Compose, healthchecks docker compose up works build: docker compose
 15 Documentation README, API docs, limitations final repo polish docs: final documentation
+
+Phase 11 price validation (D-7): config load rejects `PRO_PRICE_MICRO_USD` that is not a multiple of 10,000; the check compares Stripe `unit_amount * 10_000` with `PRO_PRICE_MICRO_USD` and requires `currency=usd` and a monthly recurring interval; it runs as a startup/script check, is mocked in tests, and never runs inside `/health`.
 
 Post-project (on request): synopsis, SRS, use case diagram, data dictionary, internship report chapter, PPT, speaking script, 30+ viva questions grounded in the real implementation.
 
